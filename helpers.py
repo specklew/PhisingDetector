@@ -1,31 +1,21 @@
 import datetime
-import os
-import sys
-from contextlib import contextmanager
+import io
+from contextlib import redirect_stdout
+
 import whois
-
-
-@contextmanager
-def suppress_stdout():
-    with open(os.devnull, "w") as devnull:
-        old_stdout = sys.stdout
-        sys.stdout = devnull
-        try:
-            yield
-        finally:
-            sys.stdout = old_stdout
-
 
 epochTime = datetime.datetime(1970, 1, 1)
 
 
 def get_whois_data(domain):
     try:
-        # Look up the whois information
-        with suppress_stdout():
-            result = whois.whois(domain)
-            return result
-    except whois.parser.PywhoisError:
+        trap = io.StringIO()
+        #with redirect_stdout(trap):
+            # Look up the whois information
+        result = whois.whois(domain)
+
+        return result
+    except:
         # Return null if the domain is not registered
         return None
 

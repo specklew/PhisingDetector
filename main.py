@@ -1,34 +1,36 @@
 import concurrent.futures
-import datetime
 import multiprocessing
-import time
 import pandas as pd
 import numpy as np
-import tqdm as tqdm
+import tqdm
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import GridSearchCV
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.preprocessing import LabelEncoder
 import pickle
 import tldextract
-import whois
 import helpers as h
 
 if __name__ == '__main__':
     pd.set_option('display.max_columns', None)
 
-    num_processes = multiprocessing.cpu_count()
+    num_processes = multiprocessing.cpu_count() * 10
+    print("Threading will be conducted with " + num_processes.__str__() + " tasks.")
     whoisQueryCounter = 0
+    is_new_file = False
 
-    data = pd.read_csv('malicious_phish.csv')
-    data = data.head(10000)
+    processed_data = pd.DataFrame()
 
-    y = data['type']
+    try:
+        processed_data = pd.read_csv('processed.csv')
+    except FileNotFoundError:
+        print('Could not find processed.csv file. Creating a new one.')
+        is_new_file = True
+
+    initial_data = pd.read_csv('malicious_phish.csv')
+    data = initial_data[(processed_data.shape[0]):].reset_index()
 
     domainEncoder = LabelEncoder()
-    whoisEncoder = OneHotEncoder()
-    vectorizer = TfidfVectorizer()
 
     strLengthsData = data['url'].str.len()
     isHttps = data['url'].str.contains("https://*")
@@ -39,12 +41,9 @@ if __name__ == '__main__':
     domainExtension = domainEncoder.fit_transform(domainExtension)
 
     print("Started whois queries...")
-    startTime = time.time()
-
-    with concurrent.futures.ProcessPoolExecutor(num_processes) as pool:
-        whoisData = list(tqdm.tqdm(pool.map(h.get_whois_data, data['url'], chunksize=10), total=data.shape[0]))
-    time_lapsed = time.time() - startTime
-    print("The queries took: " + h.time_convert(time_lapsed))
+    with concurrent.futures.ThreadPoolExecutor(num_processes) as executor:
+        whoisData = list(tqdm.tqdm(executor.map(h.get_whois_data, data['url']), total=len(data), unit='url', smoothing=0))
+    print("Finished!")
 
     whoisCreationDate = pd.Series(list(map(h.get_creation_time, whoisData)))
     whoisExpirationDate = pd.Series(list(map(h.get_expiration_date, whoisData)))
@@ -60,14 +59,17 @@ if __name__ == '__main__':
     x['isWWW'] = isWWW
     x['numbers'] = containsNumbers
     x['extension'] = domainExtension
-    x['creationDate'] = whoisCreationDate
-    x['expirationDate'] = whoisExpirationDate
+    x['creation'] = whoisCreationDate
+    x['expiration'] = whoisExpirationDate
     x['country'] = whoisCountry
-    x['registrarLength'] = whoisRegistrar
+    x['registrar'] = whoisRegistrar
 
-    print(x.head(10))
+    if not is_new_file:
+        x = pd.concat([processed_data, x])
 
-    print(f'x :  {x.shape}')
+    x.to_csv('processed.csv', index=False)
+
+    y = initial_data.head(x.shape[0])['type']
 
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.20, random_state=101)
 
@@ -77,11 +79,11 @@ if __name__ == '__main__':
     print(f'y_test : {y_test.shape}')
 
     # Number of trees in random forest
-    n_estimators = [int(x) for x in np.linspace(start=10, stop=80, num=10)]
+    n_estimators = [int(x) for x in np.linspace(start=20, stop=160, num=10)]
     # Number of features to consider at every split
     max_features = ['sqrt']
     # Maximum number of levels in tree
-    max_depth = [2, 4]
+    max_depth = [2, 4, 6, 8]
     # Minimum number of samples required to split a node
     min_samples_split = [2, 5]
     # Minimum number of samples required at each leaf node
